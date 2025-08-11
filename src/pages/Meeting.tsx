@@ -1,41 +1,28 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Mic, MicOff, User, Video, VideoOff, ScreenShare, MessageSquare, Users, PhoneOff } from "lucide-react";
+import useWebRTC from "@/hooks/useWebRTC";
+import Peer from "simple-peer";
 
-const ParticipantTile: React.FC<{ name: string; avatarUrl?: string; cameraOn?: boolean; isMuted?: boolean; isSpeaking?: boolean; isYou?: boolean; size?: 'small' | 'large' }> = ({
-  name,
-  avatarUrl,
-  cameraOn = true,
-  isMuted = false,
-  isSpeaking = false,
-  isYou = false,
-  size = 'large',
-}) => (
-  <div
-    className={`aspect-video rounded-md border relative overflow-hidden group ${isSpeaking ? 'ring-2 ring-primary' : ''} ${size === 'small' ? 'w-40' : 'flex-1'}`}
-  >
-    <div className="absolute inset-0 bg-muted flex items-center justify-center">
-      {!cameraOn && (
-        <div className="flex flex-col items-center gap-2">
-          <Avatar className="h-16 w-16">
-            <AvatarImage src={avatarUrl} />
-            <AvatarFallback><User /></AvatarFallback>
-          </Avatar>
-          <div className="text-lg">{name}</div>
-        </div>
-      )}
-    </div>
-    {cameraOn && <div className="absolute inset-0 bg-secondary" />}
-    <div className="absolute bottom-2 left-2 text-sm bg-background/80 px-2 py-1 rounded flex items-center gap-2">
-      {name} {isYou && '(You)'}
-      {isMuted ? <MicOff size={16} className="text-destructive" /> : <Mic size={16} />}
-    </div>
-  </div>
-);
+const VideoPlayer = ({ peer }: { peer: Peer.Instance }) => {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    peer.on('stream', stream => {
+      if (ref.current) {
+        ref.current.srcObject = stream;
+      }
+    });
+  }, [peer]);
+
+  return (
+    <video playsInline autoPlay ref={ref} className="aspect-video rounded-md border relative overflow-hidden group w-full" />
+  );
+};
 
 const ChatPanel: React.FC<{ open: boolean; onSend: (text: string) => void; messages: { from: string; text: string; time: string }[] }> = ({ open, onSend, messages }) => {
   const [text, setText] = useState("");
@@ -102,17 +89,23 @@ const Meeting: React.FC = () => {
   const [messages, setMessages] = useState<{ from: string; text: string; time: string }[]>([
     { from: "System", text: "Welcome to the meeting!", time: "now" }
   ]);
+  const [stream, setStream] = useState<MediaStream>();
+  const { peers, toggleMute, toggleCamera } = useWebRTC(id!, stream);
+  const userVideo = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+      setStream(stream);
+      if (userVideo.current) {
+        userVideo.current.srcObject = stream;
+      }
+    });
+  }, []);
 
   const participants = useMemo(() => [
     { id: 1, name: "You", avatarUrl: "https://github.com/shadcn.png", isMuted: muted, cameraOn: camera, isYou: true },
-    { id: 2, name: "Ada Lovelace", avatarUrl: "https://randomuser.me/api/portraits/women/43.jpg", isMuted: true, cameraOn: false },
-    { id: 3, name: "Tolu Adebayo", avatarUrl: "https://randomuser.me/api/portraits/men/32.jpg", isMuted: false, cameraOn: true },
-    { id: 4, name: "Chioma Okoro", avatarUrl: "https://randomuser.me/api/portraits/women/44.jpg", isMuted: false, cameraOn: true, isSpeaking: true },
-    { id: 5, name: "John Doe", avatarUrl: "https://randomuser.me/api/portraits/men/45.jpg", isMuted: true, cameraOn: true },
-  ], [muted, camera]);
-
-  const [activeParticipant, setActiveParticipant] = useState(participants[3]);
-  const otherParticipants = participants.filter(p => p.id !== activeParticipant.id);
+    ...peers.map((_, index) => ({ id: index + 2, name: `Peer ${index + 1}`, avatarUrl: `https://randomuser.me/api/portraits/men/${index + 40}.jpg`, isMuted: false, cameraOn: true }))
+  ], [peers, muted, camera]);
 
   return (
     <>
@@ -127,28 +120,30 @@ const Meeting: React.FC = () => {
           {sharing && (
             <Card className="p-3 mb-4">Screen sharing is ON (simulated)</Card>
           )}
-          <div className="flex-1 flex items-center justify-center">
-            <ParticipantTile {...activeParticipant} size="large" />
-          </div>
-          <div className="flex gap-3 overflow-x-auto p-2 bg-secondary/30 rounded-md">
-            {otherParticipants.map((p) => (
-              <div key={p.id} onClick={() => setActiveParticipant(p)}>
-                <ParticipantTile {...p} size="small" />
-              </div>
+          <div className="flex-1 grid grid-cols-2 gap-4">
+            <video playsInline muted ref={userVideo} autoPlay className="aspect-video rounded-md border relative overflow-hidden group w-full" />
+            {peers.map((peer, index) => (
+              <VideoPlayer key={index} peer={peer} />
             ))}
           </div>
 
           <div className="flex items-center justify-center gap-2 border rounded-md p-3 bg-card sticky bottom-0">
-            <Button variant={muted ? "secondary" : "default"} onClick={() => setMuted(v => !v)} size="lg" className="flex gap-2 items-center">
+            <Button variant={muted ? "secondary" : "default"} onClick={() => {
+              setMuted(v => !v);
+              toggleMute();
+            }} size="lg" className="flex gap-2 items-center">
               {muted ? <MicOff /> : <Mic />} {muted ? "Unmute" : "Mute"}
             </Button>
-            <Button variant={camera ? "default" : "secondary"} onClick={() => setCamera(v => !v)} size="lg" className="flex gap-2 items-center">
+            <Button variant={camera ? "default" : "secondary"} onClick={() => {
+              setCamera(v => !v);
+              toggleCamera();
+            }} size="lg" className="flex gap-2 items-center">
               {camera ? <Video /> : <VideoOff />} {camera ? "Cam Off" : "Cam On"}
             </Button>
             <Button variant={sharing ? "destructive" : "default"} onClick={() => setSharing(v => !v)} size="lg" className="flex gap-2 items-center">
               <ScreenShare /> {sharing ? "Stop" : "Share"}
             </Button>
-            <Button variant={participantsOpen ? 'default' : 'secondary'} onClick={() => { setParticipantsOpen(v => !v); setChatOpen(false); }} size="lg" className="flex gap-2 items-center"><Users /> Participants ({participants.length})</Button>
+            <Button variant={participantsOpen ? 'default' : 'secondary'} onClick={() => { setParticipantsOpen(v => !v); setChatOpen(false); }} size="lg" className="flex gap-2 items-center"><Users /> Participants ({peers.length + 1})</Button>
             <Button variant={chatOpen ? 'default' : 'secondary'} onClick={() => { setChatOpen(v => !v); setParticipantsOpen(false); }} size="lg" className="flex gap-2 items-center"><MessageSquare /> Chat</Button>
             <div className="ml-auto">
               <Button variant="destructive" onClick={() => navigate("/dashboard")} size="lg" className="flex gap-2 items-center"><PhoneOff /> Leave</Button>

@@ -8,19 +8,25 @@ import { Mic, MicOff, User, Video, VideoOff, ScreenShare, MessageSquare, Users, 
 import useWebRTC from "@/hooks/useWebRTC";
 import Peer from "simple-peer";
 
-const VideoPlayer = ({ peer }: { peer: Peer.Instance }) => {
+const VideoPlayer = ({ peer, stream }: { peer?: Peer.Instance, stream?: MediaStream }) => {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    peer.on('stream', stream => {
+    if (peer) {
+      peer.on('stream', (remoteStream) => {
+        if (ref.current) {
+          ref.current.srcObject = remoteStream;
+        }
+      });
+    } else if (stream) {
       if (ref.current) {
         ref.current.srcObject = stream;
       }
-    });
-  }, [peer]);
+    }
+  }, [peer, stream]);
 
   return (
-    <video playsInline autoPlay ref={ref} className="aspect-video rounded-md border relative overflow-hidden group w-full" />
+    <video playsInline autoPlay ref={ref} className="h-full w-full object-contain" muted={!!stream} />
   );
 };
 
@@ -92,6 +98,7 @@ const Meeting: React.FC = () => {
   const [stream, setStream] = useState<MediaStream>();
   const { peers, toggleMute, toggleCamera } = useWebRTC(id!, stream);
   const userVideo = useRef<HTMLVideoElement>(null);
+  const [activePeer, setActivePeer] = useState<Peer.Instance | 'me'>('me');
 
   useEffect(() => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
@@ -120,11 +127,33 @@ const Meeting: React.FC = () => {
           {sharing && (
             <Card className="p-3 mb-4">Screen sharing is ON (simulated)</Card>
           )}
-          <div className="flex-1 grid grid-cols-2 gap-4">
-            <video playsInline muted ref={userVideo} autoPlay className="aspect-video rounded-md border relative overflow-hidden group w-full" />
-            {peers.map((peer, index) => (
-              <VideoPlayer key={index} peer={peer} />
-            ))}
+          <div className="flex-1 flex flex-col gap-4">
+            <div className="flex-1 bg-muted rounded-md flex items-center justify-center">
+              {activePeer === 'me' ? (
+                <VideoPlayer stream={stream} />
+              ) : (
+                <VideoPlayer peer={activePeer as Peer.Instance} />
+              )}
+            </div>
+            <div className="flex gap-3 overflow-x-auto p-2 bg-secondary/30 rounded-md h-40">
+              <div
+                className={`w-40 aspect-video rounded-md border relative overflow-hidden group cursor-pointer ${activePeer === 'me' ? 'ring-2 ring-primary' : ''}`}
+                onClick={() => setActivePeer('me')}
+              >
+                <VideoPlayer stream={stream} />
+                <div className="absolute bottom-1 left-1 text-xs bg-background/80 px-1 rounded">You</div>
+              </div>
+              {peers.map((peer, index) => (
+                <div
+                  key={index}
+                  className={`w-40 aspect-video rounded-md border relative overflow-hidden group cursor-pointer ${activePeer === peer ? 'ring-2 ring-primary' : ''}`}
+                  onClick={() => setActivePeer(peer)}
+                >
+                  <VideoPlayer peer={peer} />
+                  <div className="absolute bottom-1 left-1 text-xs bg-background/80 px-1 rounded">Peer {index + 1}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="flex items-center justify-center gap-2 border rounded-md p-3 bg-card sticky bottom-0">
